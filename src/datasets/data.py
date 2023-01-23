@@ -442,7 +442,35 @@ class PMUData(BaseData):
         df = pd.read_csv(filepath)
         return df
 
+class RatData(BaseData):
+   def __init__(self,root_dir, file_list = None, pattern = None, n_proc = 0, limit_size=None, config = None):
+     self.set_num_processes(n_proc = n_proc)
+     self.all_df = self.load_all( root_dir, file_list=file_list)
+     self.all_df = self.all_df.set_index('trial_id')
+     self.all_IDs = self.all_df.index.unique()
+     self.max_seq_len = 366
+     self.feature_names = self.all_df.columns
+     self.feature_df = self.all_df[self.feature_names]
+     if limit_size is not None:
+         if limit_size > 1:
+               limit_size = int(limit_size)
+         else:  # interpret as proportion if in (0, 1]
+               limit_size = int(limit_size * len(self.all_IDs))
+         self.all_IDs = self.all_IDs[:limit_size]
+         self.all_df = self.all_df.loc[self.all_IDs]
+
+   def load_all(self, root_dir, file_list=None):
+       if file_list is not None:
+           data_paths = [os.path.join(root_dir, p) for p in file_list]
+       else:
+           data_paths = [os.path.join(root_dir, p) for p in os.listdir(root_dir)]
+       input_paths = [p for p in data_paths if os.path.isfile(p) and p.endswith('.csv')]
+       for path in input_paths:
+         all_df = pd.read_csv(path, header = 0)
+       return all_df 
+
 
 data_factory = {'weld': WeldData,
                 'tsra': TSRegressionArchive,
-                'pmu': PMUData}
+                'pmu': PMUData,
+                'ratdata': RatData}
