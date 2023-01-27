@@ -468,7 +468,8 @@ class RatData(BaseData):
        input_paths = [p for p in data_paths if os.path.isfile(p) and p.endswith('.csv')]
        for path in input_paths:
          all_df = pd.read_csv(path, header = 0)
-       return all_df 
+         labels_df = pd.read_csv(path,header = 0)
+       return all_df, labels_df 
 
 
 data_factory = {'weld': WeldData,
