@@ -448,7 +448,8 @@ class RatData(BaseData):
      self.all_df = self.load_all( root_dir, file_list=file_list)
      self.all_df = self.all_df.set_index('trial_id')
      self.all_IDs = self.all_df.index.unique()
-     self.max_seq_len = 366
+     self.labels_df = self.all_df
+     self.max_seq_len = 550
      self.feature_names = self.all_df.columns
      self.feature_df = self.all_df[self.feature_names]
      if limit_size is not None:
