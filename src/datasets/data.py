@@ -445,11 +445,11 @@ class PMUData(BaseData):
 class RatData(BaseData):
    def __init__(self,root_dir, file_list = None, pattern = None, n_proc = 0, limit_size=None, config = None):
      self.set_num_processes(n_proc = n_proc)
-     self.all_df = self.load_all( root_dir, file_list=file_list)
+     self.all_df, self.labels_df = self.load_all( root_dir, file_list=file_list)
      self.all_df = self.all_df.set_index('trial_id')
      self.all_IDs = self.all_df.index.unique()
-     self.labels_df = self.all_df
-     self.max_seq_len = 610
+     #self.labels_df = self.all_df
+     self.max_seq_len = 609
      self.feature_names = self.all_df.columns
      self.feature_df = self.all_df[self.feature_names]
      if limit_size is not None:
@@ -461,15 +461,16 @@ class RatData(BaseData):
          self.all_df = self.all_df.loc[self.all_IDs]
 
    def load_all(self, root_dir, file_list=None):
-       if file_list is not None:
-           data_paths = [os.path.join(root_dir, p) for p in file_list]
-       else:
-           data_paths = [os.path.join(root_dir, p) for p in os.listdir(root_dir)]
-       input_paths = [p for p in data_paths if os.path.isfile(p) and p.endswith('.csv')]
-       for path in input_paths:
-         all_df = pd.read_csv(path, header = 0)
-         labels_df = pd.read_csv(path,header = 0)
-       return all_df, labels_df 
+      # if file_list is not None:
+       #    data_paths = [os.path.join(root_dir, p) for p in file_list]
+       #else:
+        #   data_paths = [os.path.join(root_dir, p) for p in os.listdir(root_dir)]
+       #input_paths = [p for p in data_paths if os.path.isfile(p) and p.endswith('.csv')]
+       #for path in input_paths:
+       path = os.path.join(root_dir, file_list[0]) if file_list is not None else os.path.join(root_dir, os.listdir(root_dir)[0])
+       all_df = pd.read_csv(path, header = 0, dtype=np.float32)
+       labels_df = pd.read_csv(path,header = 0, dtype = np.float32)
+       return all_df, labels_df  
 
 
 data_factory = {'weld': WeldData,
