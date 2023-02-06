@@ -45,8 +45,8 @@ class Options(object):
                                  help='Number of processes for data loading/preprocessing. By default, equals num. of available cores.')
         self.parser.add_argument('--num_workers', type=int, default=0,
                                  help='dataloader threads. 0 for single-thread.')
-        self.parser.add_argument('--seed',
-                                 help='Seed used for splitting sets. None by default, set to an integer for reproducibility')
+        self.parser.add_argument('--seed', default=13, type=int,
+                                 help='Seed used for splitting sets.')
         # Dataset
         self.parser.add_argument('--limit_size', type=float, default=None,
                                  help="Limit  dataset to specified smaller random sample, e.g. for rapid debugging purposes. "
@@ -71,7 +71,7 @@ class Options(object):
                                  help="""Regex pattern used to select files contained in `data_dir` exclusively for the validation set.
                             If None, a positive `val_ratio` will be used to reserve part of the common data set.""")
         self.parser.add_argument('--test_pattern', type=str,
-                                 help="""Regex pattern used to select files contained in `data_dir` exclusively for the test set.
+                                 help="""Regex pattern used to select files contained in `data_dir` exclusively for the test set. For forecasting with Bxl data, must be None (for training) or bxl_data (for testing)..
                             If None, `test_ratio`, if specified, will be used to reserve part of the common data set.""")
         self.parser.add_argument('--normalization',
                                  choices={'standardization', 'minmax', 'per_sample_std', 'per_sample_minmax'},
@@ -83,12 +83,19 @@ class Options(object):
         self.parser.add_argument('--subsample_factor', type=int,
                                  help='Sub-sampling factor used for long sequences: keep every kth sample')
         # Training process
-        self.parser.add_argument('--task', choices={"imputation", "transduction", "classification", "regression"},
+        self.parser.add_argument('--task', choices={"imputation", "transduction", "classification", "regression", "forecast"},
                                  default="imputation",
                                  help=("Training objective/task: imputation of masked values,\n"
                                        "                          transduction of features to other features,\n"
                                        "                          classification of entire time series,\n"
                                        "                          regression of scalar(s) for entire time series"))
+        self.parser.add_argument('--pollutant', choices={None, 'no2', 'pm10', 'pm25'},
+                                 default=None,
+                                 help="Pollutant for forecasting if using Brussels dataset. None otherwise")
+        self.parser.add_argument('--no_causal_mask', action='store_true',
+                                 help='Turn off the causal forecasting mask in the forecasting transformer. Note that this is a negative option, because the default option when using forecasting will be to have the mask on, since that is what makes forecasting forecasting. The purpose of this option is for debugging.')
+        self.parser.add_argument('--remove_var', default=None, nargs='*',
+                                 help="If none, no variables will be remove from Bxl data. Otherwise, specify the variables to remove. For exammple --remove_var pm10, or --remove_var pm10 covid. But don't remove the pollutant you want to forecast :(. Choose a combination of pm25, pm10, no2, covid, tun_del_parking, tun_lou_in_bas_midi_et_cambre, tun_montg_cambre, tun_ste_out_centre_et_bas_cambre, tun_vp_a12")
         self.parser.add_argument('--masking_ratio', type=float, default=0.15,
                                  help='Imputation: mask this proportion of each variable')
         self.parser.add_argument('--mean_mask_length', type=float, default=3,
@@ -139,6 +146,8 @@ class Options(object):
         # Model
         self.parser.add_argument('--model', choices={"transformer", "LINEAR"}, default="transformer",
                                  help="Model class")
+        self.parser.add_argument('--horizon', type=int, 
+                                 help="""Horizon to use for forecastin, i.e., 1-step ahead, 2-step, or more.""")
         self.parser.add_argument('--max_seq_len', type=int,
                                  help="""Maximum input sequence length. Determines size of transformer layers.
                                  If not provided, then the value defined inside the data class will be used.""")
@@ -162,6 +171,13 @@ class Options(object):
                                  help='Activation to be used in transformer encoder')
         self.parser.add_argument('--normalization_layer', choices={'BatchNorm', 'LayerNorm'}, default='BatchNorm',
                                  help='Normalization layer to be used internally in transformer encoder')
+        self.parser.add_argument('--verbose', action='store_true',
+                                 help='Include detailed logging information from data processing/model. For debugging purposes')
+        self.parser.add_argument('--use_wandb', action='store_true',
+                                 help='Use wandb logging. This repository also has the ability to use tensorboard, but that was not used for forecasting experiments')
+        self.parser.add_argument('--wandb_dir', default='./wandb',
+                                 help='Writing directory for wandb. If none provided, will use wandb default, ./wandb')
+
 
     def parse(self):
 
