@@ -34,8 +34,38 @@ from models.ts_transformer import model_factory
 from models.loss import get_loss_module
 from optimizers import get_optimizer
 
+import wandb
+
 
 def main(config):
+
+    if config['verbose']:
+        logging.info("Using verbose logging")
+
+    if config['use_wandb']:
+        wandb_config = dict(
+            data_class=config['data_class'],
+            batch_size=config['batch_size'],
+            val_ration=config['val_ratio'],
+            learning_rate=config['lr'],
+            d_model=config['d_model'],
+            max_len=config['max_seq_len'],
+            task=config['task'],
+            pollutant=config['pollutant'],
+            horizon=config['horizon'],
+        )
+
+        #logging.info("Will save wandb output to %s", config['wandb_dir'])
+        #dir=config['wandb_dir'],
+        # mix is my wandb username. Change it to yours
+        wandb.init(
+            project="mvts-forecasting",
+            name=config['experiment_name'],
+            notes=config['comment'],
+            entity="mix",
+            tags=["forecasting", 'transformer'],
+            config=wandb_config,
+        ) 
 
     total_epoch_time = 0
     total_eval_time = 0
@@ -47,9 +77,9 @@ def main(config):
     logger.addHandler(file_handler)
 
     logger.info('Running:\n{}\n'.format(' '.join(sys.argv)))  # command used to run
-
-    if config['seed'] is not None:
-        torch.manual_seed(config['seed'])
+    
+    # Set seed to argument provided in CLI. By default it is 13.
+    torch.manual_seed(config['seed'])
 
     device = torch.device('cuda' if (torch.cuda.is_available() and config['gpu'] != '-1') else 'cpu')
     logger.info("Using device: {}".format(device))
@@ -59,6 +89,7 @@ def main(config):
     # Build data
     logger.info("Loading and preprocessing data ...")
     data_class = data_factory[config['data_class']]
+	# Pattern will be train or test
     my_data = data_class(config['data_dir'], pattern=config['pattern'], n_proc=config['n_proc'], limit_size=config['limit_size'], config=config)
     feat_dim = my_data.feature_df.shape[1]  # dimensionality of data features
     if config['task'] == 'classification':
@@ -81,22 +112,25 @@ def main(config):
         try:
             test_indices = [int(ind) for ind in test_indices]  # integer indices
         except ValueError:
-            pass  # in case indices are non-integers
+            ptrainass  # in case indices are non-integers
         logger.info("Loaded {} test IDs from file: '{}'".format(len(test_indices), config['test_from']))
+    # If val pattern is provided, will load BXL data again if pattern not handled in code
     if config['val_pattern']:  # used if val data come from different files / file patterns
         val_data = data_class(config['data_dir'], pattern=config['val_pattern'], n_proc=-1, config=config)
         val_indices = val_data.all_IDs
 
     # Note: currently a validation set must exist, either with `val_pattern` or `val_ratio`
     # Using a `val_pattern` means that `val_ratio` == 0 and `test_ratio` == 0
+    # test_ratio will by default by 0 and test indices by default None, so test_set_ratio will not be used unless specfically configured.
     if config['val_ratio'] > 0:
+        logging.info("Splitting data using val ratio %s", config['val_ratio'])
         train_indices, val_indices, test_indices = split_dataset(data_indices=my_data.all_IDs,
                                                                  validation_method=validation_method,
                                                                  n_splits=1,
                                                                  validation_ratio=config['val_ratio'],
                                                                  test_set_ratio=config['test_ratio'],  # used only if test_indices not explicitly specified
                                                                  test_indices=test_indices,
-                                                                 random_seed=1337,
+                                                                 random_seed=config['seed'],
                                                                  labels=labels)
         train_indices = train_indices[0]  # `split_dataset` returns a list of indices *per fold/split*
         val_indices = val_indices[0]  # `split_dataset` returns a list of indices *per fold/split*
@@ -121,6 +155,7 @@ def main(config):
 
     # Pre-process features
     normalizer = None
+    logger.info("Normaliztion %s", config['normalization'])
     if config['norm_from']:
         with open(config['norm_from'], 'rb') as f:
             norm_dict = pickle.load(f)
@@ -172,6 +207,7 @@ def main(config):
     lr = config['lr']  # current learning step
     # Load model and optimizer state
     if args.load_model:
+        logger.info("Loading saved model from %s", config['load_model'])
         model, optimizer, start_epoch = utils.load_model(model, config['load_model'], optimizer, config['resume'],
                                                          config['change_output'],
                                                          config['lr'],
@@ -182,6 +218,7 @@ def main(config):
     loss_module = get_loss_module(config)
 
     if config['test_only'] == 'testset':  # Only evaluate and skip training
+        logger.info("Running test evaluation ONLY")
         dataset_class, collate_fn, runner_class = pipeline_factory(config)
         test_dataset = dataset_class(test_data, test_indices)
 
@@ -194,13 +231,18 @@ def main(config):
         test_evaluator = runner_class(model, test_loader, device, loss_module,
                                             print_interval=config['print_interval'], console=config['console'])
         aggr_metrics_test, per_batch_test = test_evaluator.evaluate(keep_all=True)
-        print_str = 'Test Summary: '
-        for k, v in aggr_metrics_test.items():
-            print_str += '{}: {:8f} | '.format(k, v)
-        logger.info(print_str)
+        logger.info("Test eval output")
+        logger.info(aggr_metrics_test)
+        #logging.info(per_batch_test)
+        if config['task'] == 'forecast':        
+            utils.write_forecast_output(per_batch_test, config['output_dir'], config['experiment_name'])
+
         return
     
     # Initialize data generators
+    # Runner class will be SupervisedRunner from running.py 
+    # Collate_fn will return 
+    # X, targets, target_masks and/or padding_masks, ids used by trainer
     dataset_class, collate_fn, runner_class = pipeline_factory(config)
     val_dataset = dataset_class(val_data, val_indices)
 
@@ -211,6 +253,9 @@ def main(config):
                             pin_memory=True,
                             collate_fn=lambda x: collate_fn(x, max_len=model.max_len))
 
+    # We pass the train indices to the dataset class, which
+    # when initiated, will select samples to train on from the whole
+    # dataset. my_data has been loaded from the raw data.
     train_dataset = dataset_class(my_data, train_indices)
 
     train_loader = DataLoader(dataset=train_dataset,
@@ -241,6 +286,8 @@ def main(config):
     for epoch in tqdm(range(start_epoch + 1, config["epochs"] + 1), desc='Training Epoch', leave=False):
         mark = epoch if config['save_all'] else 'last'
         epoch_start_time = time.time()
+        # train_epoch method is from *Runner class in running.py
+        # The method for doing the main training
         aggr_metrics_train = trainer.train_epoch(epoch)  # dictionary of aggregate epoch metrics
         epoch_runtime = time.time() - epoch_start_time
         print()
@@ -265,6 +312,7 @@ def main(config):
             metrics_names, metrics_values = zip(*aggr_metrics_val.items())
             metrics.append(list(metrics_values))
 
+        logging.info("Saving model at end of epoch")
         utils.save_model(os.path.join(config['save_dir'], 'model_{}.pth'.format(mark)), epoch, model, optimizer)
 
         # Learning rate scheduling
@@ -284,6 +332,7 @@ def main(config):
 
     # Export evolution of metrics over epochs
     header = metrics_names
+    # Note that the experiment name will be used to hold the model checkpoints and all output from training and testing 
     metrics_filepath = os.path.join(config["output_dir"], "metrics_" + config["experiment_name"] + ".xls")
     book = utils.export_performance_metrics(metrics_filepath, metrics, header, sheet_name="metrics")
 
