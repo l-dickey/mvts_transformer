@@ -62,7 +62,7 @@ def main(config):
             project="mvts-forecasting",
             name=config['experiment_name'],
             notes=config['comment'],
-            entity="mix",
+            entity="bmi_ml",
             tags=["forecasting", 'transformer'],
             config=wandb_config,
         ) 
@@ -354,3 +354,4 @@ if __name__ == '__main__':
     args = Options().parse()  # `argsparse` object
     config = setup(args)  # configuration dictionary
     main(config)
+
