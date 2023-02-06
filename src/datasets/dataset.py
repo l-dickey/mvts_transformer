@@ -149,6 +149,116 @@ class ClassiregressionDataset(Dataset):
 
     def __len__(self):
         return len(self.IDs)
+class ForecastDataset(Dataset):
+
+    def __init__(self, data, indices, horizon, verbose):
+        super(ForecastDataset, self).__init__()
+
+        self.data = data  # this is a subclass of the BaseData class in data.py
+        self.IDs = indices  # list of data IDs, but also mapping between integer index and ID
+        # Below will be the subset of data selected from variable data,
+        # which is Alll the data.
+        self.feature_df = self.data.feature_df.loc[self.IDs]
+        self.h = horizon
+        self.verbose = verbose
+
+        if self.verbose:
+            logging.info("Dataset ids") 
+            logging.info(indices)
+
+        self.labels_df = self.data.labels_df.loc[self.IDs]
+
+    def __getitem__(self, ind):
+        """
+        For a given integer index, returns the corresponding (seq_length, feat_dim) array and a noise mask of same shape
+        Args:
+            ind: integer index of sample in dataset (0 through number of samples)
+        Returns:
+            X: (seq_length, feat_dim) tensor of the multivariate time series corresponding to a sample
+            y: (num_labels,) tensor of labels (num_labels > 1 for multi-task models) for each sample
+            ID: ID of sample
+        """
+
+        X = self.feature_df.loc[self.IDs[ind]].values  # (seq_length, feat_dim) array
+        if self.verbose:
+            logging.info("X shape before forecast slice")
+            logging.info(X.shape)
+            logging.info("Index of sample in dataset")
+            logging.info(ind)
+        # Remove last sequence element
+        # Need to account for simple case if we want to setup a non-autoregressive model (for easy test-case, as the model will have labels)
+        if self.h != 0:
+            X = X[:-self.h, :]  
+        if self.verbose:
+            logging.info("X shape after forecast selection")
+            logging.info(X.shape)
+        y = self.labels_df.loc[self.IDs[ind]].values  # (num_labels,) array
+        # Remove first sequence element
+        y = y[self.h:]
+        if self.verbose:
+            logging.info("labels in forecast dataset")
+            logging.info(y.shape)
+            logging.info(y) 
+
+        return torch.from_numpy(X), torch.from_numpy(y), self.IDs[ind]
+
+    def __len__(self):
+        return len(self.IDs)
+
+
+def collate_forecast(data, max_len=None):
+    """Build mini-batch tensors from a list of (X, mask) tuples. Mask input. Create
+    A little discussion of the collate function:
+        https://discuss.pytorch.org/t/how-to-use-collate-fn/27181/3
+        __getitem__ is called a bunch and then collate puts the batch together.
+    Args:
+        data: len(batch_size) list of tuples (X, y).
+            - X: torch tensor of shape (seq_length, feat_dim); variable seq_length.
+            - y: torch tensor of shape (num_labels,) : numerical targets
+        max_len: global fixed sequence length. Used for architectures requiring fixed length input,
+            where the batch length cannot vary dynamically. Longer sequences are clipped, shorter are padded with 0s. For the Brussels dataset, this will be set in the data class. It will also have to be reduced depending on what horizon of forecasting is required. 
+        max_len is set in model_factory, where it uses max_seq_len = data.max_seq_len. This is passed to collate in main.py
+    Returns:
+        X: (batch_size, padded_length, feat_dim) torch tensor of unmasked features (input)
+        targets: (batch_size, padded_length, 1) torch tensor of unmasked features (output)
+        padding_masks: (batch_size, padded_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+    """
+    batch_size = len(data)
+    features, labels, IDs = zip(*data)
+    #logging.info("labels shape in collate")
+    #logging.info(labels.shape)
+    #logging.info(labels[0].shape[-1])
+    #logging.info("max len in collate")
+    #logging.info(max_len)
+
+    # Stack and pad features and masks (convert 2D to 3D tensors, i.e. add batch dimension)
+    lengths = [X.shape[0] for X in features]  # original sequence length for each time series
+    #logging.info("lengths, important for padding")
+    #logging.info(lengths)
+    if max_len is None:
+        max_len = max(lengths)
+    X = torch.zeros(batch_size, max_len, features[0].shape[-1])  # (batch_size, padded_length, feat_dim)
+    # Note that 1 will need to be changed if doing forecasting "classification"
+    targets = torch.zeros(batch_size, max_len, 1)  # (batch_size, padded_length, 1)
+
+    # Convert from 2D to 3D tensors.
+    # This loop is necessary to make padding possible.
+    for i in range(batch_size):
+        end = min(lengths[i], max_len)
+        X[i, :end, :] = features[i][:end, :]
+        targets[i, :end, :] = labels[i][:end, :] 
+
+    #targets = torch.stack(Y, dim=0)  # (batch_size, num_labels)
+    #logging.info("collate targets shape")
+    #logging.info(targets.shape)
+    #logging.info(targets)
+
+    padding_masks = padding_mask(torch.tensor(lengths, dtype=torch.int16), max_len=max_len) # (batch_size, padded_length) boolean tensor, "1" means keep
+    #logging.info("collate padding_masks")
+    #logging.info(padding_masks.shape)
+    #logging.info(padding_masks)
+
+    return X, targets, padding_masks, IDs 
 
 
 def transduct_mask(X, mask_feats, start_hint=0.0, end_hint=0.0):
