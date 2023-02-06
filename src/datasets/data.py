@@ -230,7 +230,15 @@ class TSRegressionArchive(BaseData):
 
         self.all_df, self.labels_df = self.load_all(root_dir, file_list=file_list, pattern=pattern)
         self.all_IDs = self.all_df.index.unique()  # all sample IDs (integer indices 0 ... num_samples-1)
-
+        logging.info("printing dataframe")
+        logging.info(self.all_df)
+        logging.info(self.all_df.loc[0,:])
+        logging.info("df shape")
+        logging.info(self.all_df.shape)
+        logging.info("Printing labels")
+        logging.info(self.labels_df)
+        logging.info("seq len")
+        logging.info(self.max_seq_len)
         if limit_size is not None:
             if limit_size > 1:
                 limit_size = int(limit_size)
@@ -238,10 +246,18 @@ class TSRegressionArchive(BaseData):
                 limit_size = int(limit_size * len(self.all_IDs))
             self.all_IDs = self.all_IDs[:limit_size]
             self.all_df = self.all_df.loc[self.all_IDs]
-
+            logging.info('all_IDs')
+            logging.info(self.all_IDs)
+            logging.info('all_df')
+            logging.info(self.all_df)
+          
         # use all features
         self.feature_names = self.all_df.columns
         self.feature_df = self.all_df
+        logging.info('featnames')
+        logging.info(self.feature_names)
+        logging.info('feature_df')
+        logging.info(self.feature_df)
 
     def load_all(self, root_dir, file_list=None, pattern=None):
         """
@@ -446,12 +462,17 @@ class RatData(BaseData):
    def __init__(self,root_dir, file_list = None, pattern = None, n_proc = 0, limit_size=None, config = None):
      self.set_num_processes(n_proc = n_proc)
      self.all_df, self.labels_df = self.load_all( root_dir, file_list=file_list)
+     self.max_seq_len = 610
+     
+     n_trials = int(self.all_df.shape[0] / 610)
+     trial_id = [i for i in range(n_trials) for j in range(610)]
+     self.all_df['trial_id'] = trial_id
      self.all_df = self.all_df.set_index('trial_id')
      self.all_IDs = self.all_df.index.unique()
-     #self.labels_df = self.all_df
-     self.max_seq_len = 609
+     
      self.feature_names = self.all_df.columns
      self.feature_df = self.all_df[self.feature_names]
+     
      if limit_size is not None:
          if limit_size > 1:
                limit_size = int(limit_size)
@@ -459,18 +480,28 @@ class RatData(BaseData):
                limit_size = int(limit_size * len(self.all_IDs))
          self.all_IDs = self.all_IDs[:limit_size]
          self.all_df = self.all_df.loc[self.all_IDs]
-
+     logging.info("printing dataframe")
+     logging.info(self.all_df)
+     logging.info(self.all_df.loc[0,:])
+     logging.info("df shape")
+     logging.info(self.all_df.shape)
+     logging.info("Printing labels")
+     logging.info(self.labels_df)
+     logging.info("seq len")
+     logging.info(self.max_seq_len)
+     logging.info('featnames')
+     logging.info(self.feature_names)
+     logging.info('feature_df')
+     logging.info(self.feature_df)
+     logging.info('all_IDs')
+     logging.info(self.all_IDs)
+     
    def load_all(self, root_dir, file_list=None):
-      # if file_list is not None:
-       #    data_paths = [os.path.join(root_dir, p) for p in file_list]
-       #else:
-        #   data_paths = [os.path.join(root_dir, p) for p in os.listdir(root_dir)]
-       #input_paths = [p for p in data_paths if os.path.isfile(p) and p.endswith('.csv')]
-       #for path in input_paths:
-       path = os.path.join(root_dir, file_list[0]) if file_list is not None else os.path.join(root_dir, os.listdir(root_dir)[0])
-       all_df = pd.read_csv(path, header = 0, dtype=np.float32)
-       labels_df = pd.read_csv(path,header = 0, dtype = np.float32)
-       return all_df, labels_df  
+      path = os.path.join(root_dir, file_list[0]) if file_list is not None else os.path.join(root_dir, os.listdir(root_dir)[0])
+      all_df = pd.read_csv(path, header = 0, dtype=np.float32)
+      labels_df = all_df.copy()
+      labels_df = labels_df.drop_duplicates(keep=False)
+      return all_df, labels_df  
 
 
 data_factory = {'weld': WeldData,
