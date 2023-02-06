@@ -194,7 +194,7 @@ class ForecastDataset(Dataset):
             logging.info(X.shape)
         y = self.labels_df.loc[self.IDs[ind]].values  # (num_labels,) array
         # Remove first sequence element
-        y = y[self.h:]
+        y = y[:-self.h:,:]
         if self.verbose:
             logging.info("labels in forecast dataset")
             logging.info(y.shape)
@@ -239,7 +239,7 @@ def collate_forecast(data, max_len=None):
         max_len = max(lengths)
     X = torch.zeros(batch_size, max_len, features[0].shape[-1])  # (batch_size, padded_length, feat_dim)
     # Note that 1 will need to be changed if doing forecasting "classification"
-    targets = torch.zeros(batch_size, max_len, 1)  # (batch_size, padded_length, 1)
+    targets = torch.zeros(batch_size, max_len, labels[0].shape[-1])  # (batch_size, padded_length, 1)
 
     # Convert from 2D to 3D tensors.
     # This loop is necessary to make padding possible.
