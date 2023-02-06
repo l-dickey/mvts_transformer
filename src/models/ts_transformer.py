@@ -1,5 +1,6 @@
 from typing import Optional, Any
 import math
+import logging
 
 import torch
 from torch import nn, Tensor
@@ -12,6 +13,7 @@ def model_factory(config, data):
     feat_dim = data.feature_df.shape[1]  # dimensionality of data features
     # data windowing is used when samples don't have a predefined length or the length is too long
     max_seq_len = config['data_window_len'] if config['data_window_len'] is not None else config['max_seq_len']
+    verbose = config['verbose']
     if max_seq_len is None:
         try:
             max_seq_len = data.max_seq_len
@@ -48,7 +50,18 @@ def model_factory(config, data):
                                                         num_classes=num_labels,
                                                         dropout=config['dropout'], pos_encoding=config['pos_encoding'],
                                                         activation=config['activation'],
-                                                        norm=config['normalization_layer'], freeze=config['freeze'])
+                                                        norm=config['normalization_layer'], freeze=config['freeze'], verbose=verbose)
+    if (task == "forecast"):
+        num_labels = data.labels_df.shape[1]
+        return TSTransformerEncoderForecast(feat_dim, max_seq_len, config['d_model'],
+                                                config['num_heads'],
+                                                config['num_layers'], config['dim_feedforward'],
+                                                num_classes=num_labels,
+                                                dropout=config['dropout'], pos_encoding=config['pos_encoding'],
+                                                activation=config['activation'],
+                                                norm=config['normalization_layer'], freeze=config['freeze'], 
+                                                verbose=verbose, no_causal_mask=config['no_causal_mask'])
+
     else:
         raise ValueError("Model class for task '{}' does not exist".format(task))
 
@@ -138,7 +151,6 @@ class TransformerBatchNormEncoderLayer(nn.modules.Module):
     r"""This transformer encoder layer block is made up of self-attn and feedforward network.
     It differs from TransformerEncoderLayer in torch/nn/modules/transformer.py in that it replaces LayerNorm
     with BatchNorm.
-
     Args:
         d_model: the number of expected features in the input (required).
         nhead: the number of heads in the multiheadattention models (required).
@@ -170,17 +182,26 @@ class TransformerBatchNormEncoderLayer(nn.modules.Module):
     def forward(self, src: Tensor, src_mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None) -> Tensor:
         r"""Pass the input through the encoder layer.
-
         Args:
             src: the sequence to the encoder layer (required).
             src_mask: the mask for the src sequence (optional).
             src_key_padding_mask: the mask for the src keys per batch (optional).
-
         Shape:
             see the docs in Transformer class.
         """
+        #logging.info("src in batch encoder layer")
+        #logging.info(src.shape)
+        #logging.info(src)
+        #logging.info("src mask")
+        ##logging.info(src_mask.shape)
+        #logging.info(src_mask)
+        #logging.info("src padding mask")
+        #logging.info(src_key_padding_mask)
+        #logging.info(src_key_padding_mask.shape)
         src2 = self.self_attn(src, src, src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
+        #logging.info("src2 after attention")
+        #logging.info(src2)
         src = src + self.dropout1(src2)  # (seq_len, batch_size, d_model)
         src = src.permute(1, 2, 0)  # (batch_size, d_model, seq_len)
         # src = src.reshape([src.shape[0], -1])  # (batch_size, seq_length * d_model)
@@ -191,6 +212,7 @@ class TransformerBatchNormEncoderLayer(nn.modules.Module):
         src = src.permute(1, 2, 0)  # (batch_size, d_model, seq_len)
         src = self.norm2(src)
         src = src.permute(2, 0, 1)  # restore (seq_len, batch_size, d_model)
+
         return src
 
 
@@ -254,8 +276,10 @@ class TSTransformerEncoderClassiregressor(nn.Module):
     """
 
     def __init__(self, feat_dim, max_len, d_model, n_heads, num_layers, dim_feedforward, num_classes,
-                 dropout=0.1, pos_encoding='fixed', activation='gelu', norm='BatchNorm', freeze=False):
+                 dropout=0.1, pos_encoding='fixed', activation='gelu', norm='BatchNorm', freeze=False, verbose=False):
         super(TSTransformerEncoderClassiregressor, self).__init__()
+
+        self.verbose = verbose
 
         self.max_len = max_len
         self.d_model = d_model
@@ -295,20 +319,173 @@ class TSTransformerEncoderClassiregressor(nn.Module):
         """
 
         # permute because pytorch convention for transformers is [seq_length, batch_size, feat_dim]. padding_masks [batch_size, feat_dim]
+        #logging.info("src in ts transformer encoder")
+        #logging.info(X.shape)
+        #logging.info(X)
         inp = X.permute(1, 0, 2)
         inp = self.project_inp(inp) * math.sqrt(
             self.d_model)  # [seq_length, batch_size, d_model] project input vectors to d_model dimensional space
         inp = self.pos_enc(inp)  # add positional encoding
         # NOTE: logic for padding masks is reversed to comply with definition in MultiHeadAttention, TransformerEncoderLayer
         output = self.transformer_encoder(inp, src_key_padding_mask=~padding_masks)  # (seq_length, batch_size, d_model)
+
+        if self.verbose:
+            logging.info("output from ts")
+            logging.info(output)
+
         output = self.act(output)  # the output transformer encoder/decoder embeddings don't include non-linearity
         output = output.permute(1, 0, 2)  # (batch_size, seq_length, d_model)
         output = self.dropout1(output)
 
-        # Output
+        if self.verbose:
+            logging.info("Padding masks in forward")
+            logging.info(padding_masks.shape)
+            logging.info(padding_masks)
+            logging.info("output before padding masks")
+            logging.info(output.shape)
+            logging.info(output)
+        
         output = output * padding_masks.unsqueeze(-1)  # zero-out padding embeddings
+
+        if self.verbose:
+            logging.info("output after padding masks")
+            logging.info(output.shape)
+            logging.info(output)
+        
         output = output.reshape(output.shape[0], -1)  # (batch_size, seq_length * d_model)
         output = self.output_layer(output)  # (batch_size, num_classes)
 
+        if self.verbose:
+            logging.info("output after padding masks")
+            logging.info("output after final layer ")
+            logging.info(output.shape)
+            logging.info(output)
+ 
         return output
 
+
+class TSTransformerEncoderForecast(nn.Module):
+    """
+    Transformer for forecasting. The reason there is a separate transformer for 
+    forecasting is that the final dimensionality is different. We need a prediction for every time point in 
+    the sequence, instead of 1 output.
+    Concatenates final layer embeddings and uses 0s to ignore padding embeddings in final output layer.
+    This class will be fore finetuning regression, classification, or forecasting.
+    """
+
+    def __init__(self, feat_dim, max_len, d_model, n_heads, num_layers, dim_feedforward, num_classes,
+                 dropout=0.1, pos_encoding='fixed', activation='gelu', norm='BatchNorm', freeze=False, verbose=False, no_causal_mask=True):
+        super(TSTransformerEncoderForecast, self).__init__()
+
+        self.verbose = verbose
+        self.no_causal_mask = no_causal_mask
+
+        self.max_len = max_len
+        self.d_model = d_model
+        self.n_heads = n_heads
+
+        self.project_inp = nn.Linear(feat_dim, d_model)
+        self.pos_enc = get_pos_encoder(pos_encoding)(d_model, dropout=dropout*(1.0 - freeze), max_len=max_len)
+
+        if norm == 'LayerNorm':
+            encoder_layer = TransformerEncoderLayer(d_model, self.n_heads, dim_feedforward, dropout*(1.0 - freeze), activation=activation)
+        else:
+            encoder_layer = TransformerBatchNormEncoderLayer(d_model, self.n_heads, dim_feedforward, dropout*(1.0 - freeze), activation=activation)
+
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
+
+        self.act = _get_activation_fn(activation)
+
+        self.dropout1 = nn.Dropout(dropout)
+
+        self.feat_dim = feat_dim
+        # Num classes will be 1 for forecasting (1 continuous value at each time point)
+        self.num_classes = num_classes
+        self.output_layer = self.build_output_module(d_model, num_classes)
+
+    def build_output_module(self, d_model, num_classes):
+        """
+        The number of input features for the linear layer will be the dimension of the model,
+        so that it is applied independently to each element of the sequence. This differs from 
+        the regress/classi implementation, where the hidden dim and seq_len are merged into one row,
+        in order to generate 1 continuous output for the whole sequence.
+        """
+        output_layer = nn.Linear(d_model, num_classes)
+        # no softmax (or log softmax), because CrossEntropyLoss does this internally. If probabilities are needed,
+        # add F.log_softmax and use NLLoss
+        return output_layer
+
+    def generate_forecast_mask(self, device):
+        """
+        Creates Float mask, for autoregressive forecasting.
+        See https://github.com/idiap/fast-transformers/blob/2fe048a14c2e67787f553e899123ca4ba9f27e76/fast_transformers/masking.py#L204.
+        Note that from pytorch docs: "For a float mask, the mask values will be added to the attention weight."
+        Args: 
+            device: Computing device taken from input
+        Returns: 
+            Float tensor of dimension (max_len, max_len), with -inf at places where a time point should be masked
+        """
+        # Possible to use Byte, Bool, or Float tensor. Here a Float tensor is used,
+        # which is added to attention.
+        # This seq length will already be corrected for forecasting.
+        mask = torch.triu(torch.ones(self.max_len, self.max_len)>0,0).transpose(0,1)
+        mask = (mask.float().masked_fill(mask==0,float("-inf")).masked_fill(mask==1, float(0.0)))
+
+        return mask.to(device)
+
+    def forward(self, X, padding_masks, src_masks: Optional[Tensor] = None):
+        """
+        Note that for forecasting, this is the transformer layer that needs to have been modified to accomadate src_masks. 
+        For coding of model call in config, see the model factory at the beginning of this script.
+        The src_masks argument is not necessary but is left in if there is an implementation that needs to generate forecast masks in the dataset classes.
+        Args:
+            X: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
+            padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+            src_masks: (L, S) L is the target sequence length, and S is the source sequence length. 
+                    boolean tensor, 1 means keep vector at this position, 0 means padding
+                    See https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html
+        Returns:
+            output: (batch_size, num_classes)
+        """
+
+        # permute because pytorch convention for transformers is [seq_length, batch_size, feat_dim]. padding_masks [batch_size, feat_dim]
+        if self.verbose:
+            logging.info("src in ts transformer encoder")
+            logging.info(X.shape)
+            logging.info(X)
+            logging.info("no masking status")
+            logging.info(self.no_causal_mask)
+        inp = X.permute(1, 0, 2)
+        inp = self.project_inp(inp) * math.sqrt(
+            self.d_model)  # [seq_length, batch_size, d_model] project input vectors to d_model dimensional space
+        inp = self.pos_enc(inp)  # add positional encoding
+        if not self.no_causal_mask:
+            src_masks = self.generate_forecast_mask(inp.device) 
+        # NOTE: logic for padding masks is reversed to comply with definition in MultiHeadAttention, TransformerEncoderLayer
+        output = self.transformer_encoder(inp, src_masks, src_key_padding_mask=~padding_masks)  # (seq_length, batch_size, d_model)
+        if self.verbose:
+            logging.info("output from ts")
+            logging.info(output)
+            logging.info("Causal masks")
+            logging.info(src_masks)
+        output = self.act(output)  # the output transformer encoder/decoder embeddings don't include non-linearity
+        output = output.permute(1, 0, 2)  # (batch_size, seq_length, d_model)
+        output = self.dropout1(output)
+        # Output
+        if self.verbose:
+            logging.info("output before padding masks")
+            logging.info(output.shape)
+            logging.info(output)
+        output = output * padding_masks.unsqueeze(-1)  # zero-out padding embeddings
+        if self.verbose:
+            logging.info("output after padding masks")
+            logging.info(output.shape)
+            logging.info(output)
+        # Size of output weights is seq_len * dim, num classes
+        output = self.output_layer(output)  # (batch_size, seq_len, num_classes=1)
+        if self.verbose:
+            logging.info("output after final layer")
+            logging.info(output.shape)
+            logging.info(output)
+
+        return output
