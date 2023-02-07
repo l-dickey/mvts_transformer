@@ -230,7 +230,8 @@ def main(config):
                                  collate_fn=lambda x: collate_fn(x, max_len=model.max_len))
         test_evaluator = runner_class(model, test_loader, device, loss_module,
                                             print_interval=config['print_interval'], console=config['console'])
-       	with torch.no_grad():
+       	
+	with torch.no_grad():
 		aggr_metrics_test, per_batch_test = test_evaluator.evaluate(keep_all=True)
         	logger.info("Test eval output")
         	logger.info(aggr_metrics_test)
